@@ -1,108 +1,69 @@
 # -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
-from datetime import date, datetime
-from streamlit_calendar import calendar
+from datetime import date
+from streamlit_gsheets import GSheetsConnection
 
 # --- CONFIGURATION DE L'APPLICATION ---
 PARTICIPANTS = ["Akanup", "Client", "Formateur"] 
-DATE_DEBUT = date.today() 
-COULEUR_ACCENT_AKANUP = "#FF6C73"  # Pour les sélections dans le calendrier (Corail/Rouge)
-COULEUR_HIGHLIGHT_AKANUP = "#121440" # Pour le surlignage dans le tableau (Bleu nuit)
+# ... le reste de votre config ...
 # --- FIN DE LA CONFIGURATION ---
 
-
-# --- FONCTIONS UTILES (Ne pas modifier) ---
-def highlight_common_days(row):
-    """Surligne les jours communs avec la couleur de la marque."""
-    if row['Total'] == len(PARTICIPANTS):
-        return [f'background-color: {COULEUR_HIGHLIGHT_AKANUP}20'] * len(row)
-    return [''] * len(row)
-
-# --- CŒUR DE L'APPLICATION STREAMLIT ---
+# --- CŒUR DE L'APPLICATION ---
 st.set_page_config(page_title="Planificateur Akanup", layout="wide")
 
-try:
-    st.image("logo_akanup.png", width=200)
-except:
-    st.write("Logo Akanup (logo non trouvé)")
+# Connexion à la base de données Google Sheets
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-# <--- MODIFIÉ : Le titre de l'application a été mis à jour.
+# --- Fonctions pour lire et écrire dans la base de données ---
+def read_data():
+    df = conn.read(worksheet="Feuille 1", usecols=[0, 1], ttl=5)
+    df = df.dropna(how="all") # Enlève les lignes vides
+    return df
+
+def update_database(df):
+    conn.update(worksheet="Feuille 1", data=df)
+
+# On lit les données une seule fois au début
+all_selections_df = read_data()
+
+# ... Votre interface utilisateur (titre, logo, etc.) ...
 st.title("📅 Formation / Accompagnement Akanup")
-st.write("Choisissez qui vous êtes, puis **cliquez sur les dates** du calendrier pour indiquer vos disponibilités. Recliquez sur une date pour la désélectionner.")
+# ...
 
-# Initialisation de l'état de la session
-if 'selections' not in st.session_state:
-    st.session_state.selections = {nom: set() for nom in PARTICIPANTS}
-if 'calendar_view_date' not in st.session_state:
-    st.session_state.calendar_view_date = DATE_DEBUT
-
-# Création des deux colonnes
+# Logique de l'application
 col1, col2 = st.columns([1, 2])
 
 with col1:
-    st.header("1. Qui êtes-vous ?")
-    personne_active = st.selectbox("Sélectionnez un participant :", options=PARTICIPANTS)
-
-    st.header("2. Tableau des résultats")
-    jours_selectionnes_tous = [jour for sous_liste in st.session_state.selections.values() for jour in sous_liste]
-    if jours_selectionnes_tous:
-        df = pd.DataFrame(index=sorted(list(set(jours_selectionnes_tous))))
-        for nom, dispo_set in st.session_state.selections.items():
-            df[nom] = ["✅" if jour in dispo_set else "" for jour in df.index]
-        
-        df['Total'] = df.apply(lambda row: sum(1 for x in row if x == "✅"), axis=1)
-        df_sorted = df.sort_values(by='Total', ascending=False)
-        
-        jours_communs = df_sorted[df_sorted['Total'] == len(PARTICIPANTS)]
-        if not jours_communs.empty:
-            st.success(f"🎉 **{len(jours_communs)} jour(s) commun(s) trouvé(s) !**")
-        
-        st.dataframe(df_sorted.style.apply(highlight_common_days, axis=1), use_container_width=True)
-    else:
-        st.info("Aucune date n'a encore été sélectionnée.")
-
-with col2:
-    st.header(f"3. Calendrier pour : **{personne_active}**")
+    personne_active = st.selectbox("Qui êtes-vous ?", options=PARTICIPANTS)
     
-    calendar_options = {
-        "headerToolbar": {
-            "left": "prev,next today",
-            "center": "title",
-            "right": "dayGridMonth,dayGridWeek",
-        },
-        "initialDate": str(st.session_state.calendar_view_date),
-        "timeZone": "UTC",
-    }
-
-    events_a_afficher = []
-    for jour_str in st.session_state.selections.get(personne_active, set()):
-        events_a_afficher.append({
-            "title": "Disponible",
-            "start": jour_str,
-            "end": jour_str,
-            "color": COULEUR_ACCENT_AKANUP,
-        })
-
-    resultat_calendrier = calendar(
-        events=events_a_afficher,
-        options=calendar_options,
-    )
-
+    # Affichage du tableau des résultats (basé sur le DataFrame lu depuis Google Sheets)
+    if not all_selections_df.empty:
+        # On pivote les données pour avoir les participants en colonnes
+        pivot_df = all_selections_df.pivot_table(index='Date', columns='Participant', aggfunc='size', fill_value=0)
+        # ... le reste de votre logique d'affichage du tableau ...
+    
+with col2:
+    # ... Votre logique d'affichage du calendrier ...
+    
+    # Quand un clic est détecté
     if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
-        date_cliquee_iso = resultat_calendrier.get("dateClick", {}).get("date")
+        date_cliquee_str = ... # (votre logique pour extraire la date)
+
+        # On vérifie si la sélection existe déjà
+        selection_existante = all_selections_df[
+            (all_selections_df['Participant'] == personne_active) & 
+            (all_selections_df['Date'] == date_cliquee_str)
+        ]
+
+        if not selection_existante.empty:
+            # Si elle existe, on la supprime
+            all_selections_df = all_selections_df.drop(selection_existante.index)
+        else:
+            # Sinon, on l'ajoute
+            nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
+            all_selections_df = pd.concat([all_selections_df, nouvelle_ligne], ignore_index=True)
         
-        if date_cliquee_iso:
-            date_cliquee_str = date_cliquee_iso[:10]
-
-            st.session_state.calendar_view_date = date_cliquee_str
-
-            selections_personne = st.session_state.selections[personne_active]
-            
-            if date_cliquee_str in selections_personne:
-                selections_personne.remove(date_cliquee_str)
-            else:
-                selections_personne.add(date_cliquee_str)
-            
-            st.session_state.selections[personne_active] = selections_personne
-            st.rerun()
+        # On met à jour la base de données en ligne
+        update_database(all_selections_df)
+        st.rerun()
