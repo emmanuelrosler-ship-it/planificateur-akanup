@@ -5,7 +5,6 @@ from datetime import date, datetime
 from streamlit_calendar import calendar
 
 # --- CONFIGURATION DE L'APPLICATION ---
-# <--- MODIFIÉ : Les noms des participants ont été mis à jour.
 PARTICIPANTS = ["Akanup", "Client", "Formateur"] 
 DATE_DEBUT = date.today() 
 COULEUR_ACCENT_AKANUP = "#FF6C73"  # Pour les sélections dans le calendrier (Corail/Rouge)
@@ -28,7 +27,8 @@ try:
 except:
     st.write("Logo Akanup (logo non trouvé)")
 
-st.title("📅 Planificateur Visuel")
+# <--- MODIFIÉ : Le titre de l'application a été mis à jour.
+st.title("📅 Formation / Accompagnement Akanup")
 st.write("Choisissez qui vous êtes, puis **cliquez sur les dates** du calendrier pour indiquer vos disponibilités. Recliquez sur une date pour la désélectionner.")
 
 # Initialisation de l'état de la session
