@@ -32,7 +32,7 @@ except Exception as e:
     st.stop()
 
 # --- Fonctions pour lire et écrire dans la base de données ---
-@st.cache_data(ttl=60) # On met un cache plus long pour éviter de surcharger l'API
+@st.cache_data(ttl=60) # On remet un cache raisonnable
 def read_data():
     """Lit les données depuis la feuille de calcul."""
     try:
@@ -61,10 +61,12 @@ except:
 st.title("📅 Formation / Accompagnement Akanup")
 st.write("Choisissez qui vous êtes, puis **cliquez sur les dates** pour indiquer vos disponibilités.")
 
+# Initialisation de la mémoire de la session
 if 'calendar_view_date' not in st.session_state:
     st.session_state.calendar_view_date = DATE_DEBUT
+if 'last_click_result' not in st.session_state:
+    st.session_state.last_click_result = None
 
-# On lit les données une seule fois au début de l'exécution
 all_selections_df = read_data()
 
 col1, col2 = st.columns([1, 2])
@@ -76,8 +78,7 @@ with col1:
     if not all_selections_df.empty:
         pivot_df = all_selections_df.pivot_table(index='Date', columns='Participant', aggfunc='size', fill_value=0)
         for participant in PARTICIPANTS:
-            if participant not in pivot_df.columns:
-                pivot_df[participant] = 0
+            if participant not in pivot_df.columns: pivot_df[participant] = 0
         pivot_df = pivot_df[PARTICIPANTS]
         for participant in PARTICIPANTS:
             pivot_df[participant] = pivot_df[participant].apply(lambda x: "✅" if x > 0 else "")
@@ -100,26 +101,28 @@ with col2:
     calendar_options = { "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,dayGridWeek"}, "initialDate": str(st.session_state.calendar_view_date), "timeZone": "UTC" }
     events_a_afficher = [{"title": "Disponible", "start": jour, "end": jour, "color": COULEUR_ACCENT_AKANUP} for jour in selections_personne]
     
-    resultat_calendrier = calendar(events=events_a_afficher, options=calendar_options, key=f"cal_{personne_active}")
+    # On met à jour le résultat du clic dans la session state
+    st.session_state.last_click_result = calendar(events=events_a_afficher, options=calendar_options, key=f"cal_{personne_active}")
 
-# On traite le résultat du clic APRES l'affichage, pour éviter la boucle
-if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
-    date_cliquee_iso = resultat_calendrier.get("dateClick", {}).get("date")
+# On traite le résultat du clic APRES l'affichage, et une seule fois
+if st.session_state.last_click_result and st.session_state.last_click_result.get("callback") == "dateClick":
+    date_cliquee_iso = st.session_state.last_click_result.get("dateClick", {}).get("date")
+    # On réinitialise le résultat pour ne pas traiter le même clic deux fois
+    st.session_state.last_click_result = None 
+    
     if date_cliquee_iso:
         date_cliquee_str = date_cliquee_iso[:10]
         st.session_state.calendar_view_date = date_cliquee_str
 
         selection_existante = all_selections_df[(all_selections_df['Participant'] == personne_active) & (all_selections_df['Date'] == date_cliquee_str)]
-
+        
         if not selection_existante.empty:
             all_selections_df = all_selections_df.drop(selection_existante.index)
         else:
             nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
             all_selections_df = pd.concat([all_selections_df, nouvelle_ligne], ignore_index=True)
         
-        # On met à jour la base de données et on vide le cache
         update_database(all_selections_df)
-        read_data.clear() # On vide le cache explicitement
+        read_data.clear()
         
-        # On redémarre la page pour afficher le changement
         st.rerun()
