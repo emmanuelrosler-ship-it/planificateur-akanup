@@ -38,7 +38,7 @@ except Exception as e:
     st.stop()
 
 # --- Fonctions pour lire et écrire dans la base de données ---
-# <--- MODIFIÉ : On retire la mise en cache @st.cache_data pour garantir que les données sont toujours fraîches
+# <--- MODIFIÉ : On retire la mise en cache @st.cache_data qui empêche la synchronisation
 def read_data_from_gsheet():
     """Lit les données depuis la feuille de calcul."""
     try:
@@ -68,10 +68,11 @@ except:
 st.title("📅 Formation / Accompagnement Akanup")
 st.write("Choisissez qui vous êtes, puis **cliquez sur les dates** pour indiquer vos disponibilités.")
 
+# Initialisation de la vue du calendrier (gardée pour l'expérience utilisateur)
 if 'calendar_view_date' not in st.session_state:
     st.session_state.calendar_view_date = DATE_DEBUT
 
-# <--- MODIFIÉ : On lit les données à chaque exécution pour garantir la synchronisation
+# <--- MODIFIÉ : On lit les données à chaque exécution du script, sans condition, pour garantir la fraîcheur
 all_selections_df = read_data_from_gsheet()
 
 col1, col2 = st.columns([1, 2])
@@ -95,42 +96,4 @@ with col1:
             st.success(f"🎉 **{len(jours_communs)} jour(s) commun(s) trouvé(s) !**")
         st.dataframe(df_sorted.style.apply(highlight_common_days, axis=1), use_container_width=True)
     else:
-        st.info("Aucune date n'a encore été sélectionnée.")
-
-# --- LOGIQUE DE GESTION DU CALENDRIER ET DES CLICS ---
-with col2:
-    st.header(f"3. Calendrier (vue pour : **{personne_active}**)")
-    calendar_options = { "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,dayGridWeek"}, "initialDate": str(st.session_state.calendar_view_date), "timeZone": "UTC" }
-    
-    events_a_afficher = []
-    if not all_selections_df.empty:
-        for index, row in all_selections_df.iterrows():
-            events_a_afficher.append({
-                "title": f"Disponible {row['Participant']}",
-                "start": row['Date'],
-                "end": row['Date'],
-                "color": COULEURS_PARTICIPANTS.get(row['Participant'], "#D3D3D3"),
-            })
-    
-    resultat_calendrier = calendar(events=events_a_afficher, options=calendar_options, key="stable_calendar")
-
-if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
-    date_cliquee_iso = resultat_calendrier.get("dateClick", {}).get("date")
-    if date_cliquee_iso:
-        date_cliquee_str = date_cliquee_iso[:10]
-        
-        st.session_state.calendar_view_date = date_cliquee_str
-
-        selection_existante = all_selections_df[
-            (all_selections_df['Participant'] == personne_active) & 
-            (all_selections_df['Date'] == date_cliquee_str)
-        ]
-        
-        if not selection_existante.empty:
-            all_selections_df = all_selections_df.drop(selection_existante.index)
-        else:
-            nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
-            all_selections_df = pd.concat([all_selections_df, nouvelle_ligne], ignore_index=True)
-        
-        update_database(all_selections_df)
-        st.rerun()
+        st.info("Auc
