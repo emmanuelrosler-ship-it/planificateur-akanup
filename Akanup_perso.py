@@ -38,7 +38,6 @@ except Exception as e:
     st.stop()
 
 # --- Fonctions pour lire et écrire dans la base de données ---
-# On retire @st.cache_data pour garantir que les données sont toujours fraîches pour tous les utilisateurs
 def read_data_from_gsheet():
     """Lit les données depuis la feuille de calcul."""
     try:
