@@ -68,11 +68,18 @@ except:
 st.title("📅 Formation / Accompagnement Akanup")
 st.write("Choisissez qui vous êtes, puis **cliquez sur les dates** pour indiquer vos disponibilités.")
 
+# Initialisation de la mémoire de la session
+# La lecture depuis Google Sheet ne se fait qu'une seule fois au début de la session
+if 'all_selections_df' not in st.session_state:
+    st.session_state.all_selections_df = read_data_from_gsheet()
+
 if 'calendar_view_date' not in st.session_state:
     st.session_state.calendar_view_date = DATE_DEBUT
 
-# On lit les données à chaque exécution pour garantir la synchronisation
-all_selections_df = read_data_from_gsheet()
+# Bouton de rafraîchissement manuel pour garantir la synchronisation entre utilisateurs
+if st.button("🔄 Rafraîchir les données pour voir les dernières modifications"):
+    st.session_state.all_selections_df = read_data_from_gsheet()
+    st.rerun()
 
 col1, col2 = st.columns([1, 2])
 
@@ -81,8 +88,8 @@ with col1:
     personne_active = st.selectbox("Sélectionnez un participant :", options=PARTICIPANTS, key="participant_select")
     
     st.header("2. Tableau des résultats")
-    if not all_selections_df.empty:
-        pivot_df = all_selections_df.pivot_table(index='Date', columns='Participant', aggfunc='size', fill_value=0)
+    if not st.session_state.all_selections_df.empty:
+        pivot_df = st.session_state.all_selections_df.pivot_table(index='Date', columns='Participant', aggfunc='size', fill_value=0)
         for participant in PARTICIPANTS:
             if participant not in pivot_df.columns: pivot_df[participant] = 0
         pivot_df = pivot_df[PARTICIPANTS]
@@ -103,8 +110,8 @@ with col2:
     calendar_options = { "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,dayGridWeek"}, "initialDate": str(st.session_state.calendar_view_date), "timeZone": "UTC" }
     
     events_a_afficher = []
-    if not all_selections_df.empty:
-        for index, row in all_selections_df.iterrows():
+    if not st.session_state.all_selections_df.empty:
+        for index, row in st.session_state.all_selections_df.iterrows():
             participant = row['Participant']
             date_selectionnee = row['Date']
             events_a_afficher.append({
@@ -126,20 +133,20 @@ if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
         # On met à jour la vue du calendrier pour la prochaine exécution
         st.session_state.calendar_view_date = date_cliquee_str
 
-        # On modifie le DataFrame qui a été lu au début de l'exécution
-        selection_existante = all_selections_df[
-            (all_selections_df['Participant'] == personne_active) & 
-            (all_selections_df['Date'] == date_cliquee_str)
+        # On modifie le DataFrame DANS LA SESSION
+        selection_existante = st.session_state.all_selections_df[
+            (st.session_state.all_selections_df['Participant'] == personne_active) & 
+            (st.session_state.all_selections_df['Date'] == date_cliquee_str)
         ]
         
         if not selection_existante.empty:
-            all_selections_df = all_selections_df.drop(selection_existante.index)
+            st.session_state.all_selections_df = st.session_state.all_selections_df.drop(selection_existante.index)
         else:
             nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
-            all_selections_df = pd.concat([all_selections_df, nouvelle_ligne], ignore_index=True)
+            st.session_state.all_selections_df = pd.concat([st.session_state.all_selections_df, nouvelle_ligne], ignore_index=True)
         
-        # On met à jour la base de données
-        update_database(all_selections_df)
+        # On met à jour la base de données en arrière-plan
+        update_database(st.session_state.all_selections_df)
         
-        # On redémarre pour afficher le changement
+        # On redémarre pour afficher le changement instantanément depuis la session_state
         st.rerun()
