@@ -35,7 +35,6 @@ except Exception as e:
 def read_data():
     df = conn.read(worksheet="Feuille 1", usecols=[0, 1])
     df = df.dropna(how="all")
-    # <--- CORRIGÉ : On s'assure que les colonnes sont bien du texte dès la lecture
     df['Participant'] = df['Participant'].astype(str)
     df['Date'] = df['Date'].astype(str)
     return df
@@ -112,13 +111,19 @@ with col2:
             date_cliquee_str = date_cliquee_iso[:10]
             st.session_state.calendar_view_date = date_cliquee_str
 
-            # <--- CORRIGÉ : On s'assure que la comparaison se fait bien entre chaînes de caractères
             selection_existante = all_selections_df[
-                (all_selections_df['Participant'].astype(str) == personne_active) & 
-                (all_selections_df['Date'].astype(str) == date_cliquee_str)
+                (all_selections_df['Participant'] == personne_active) & 
+                (all_selections_df['Date'] == date_cliquee_str)
             ]
 
             if not selection_existante.empty:
                 all_selections_df = all_selections_df.drop(selection_existante.index)
             else:
-                nouvelle_
+                nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
+                all_selections_df = pd.concat([all_selections_df, nouvelle_ligne], ignore_index=True)
+            
+            update_database(all_selections_df)
+            
+            read_data.clear()
+            
+            st.rerun()
