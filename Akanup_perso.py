@@ -32,7 +32,7 @@ except Exception as e:
     st.stop()
 
 # --- Fonctions pour lire et écrire dans la base de données ---
-@st.cache_data(ttl=1) # Cache très court pour être réactif
+@st.cache_data(ttl=1)
 def read_data():
     df = conn.read(worksheet="Feuille 1", usecols=[0, 1])
     df = df.dropna(how="all")
@@ -40,25 +40,27 @@ def read_data():
     df['Date'] = df['Date'].astype(str)
     return df
 
-# <--- NOUVELLES FONCTIONS DE MISE À JOUR ---
+# <--- FONCTIONS DE MISE À JOUR CORRIGÉES ---
 def add_row_to_sheet(participant, date_str):
     """Ajoute une seule ligne à la feuille Google Sheet."""
-    worksheet = conn.client.open_by_url(st.secrets["connections"]["gsheets"]["spreadsheet"]).worksheet("Feuille 1")
-    worksheet.append_row([participant, date_str])
+    # On crée un petit DataFrame avec la nouvelle ligne
+    new_row = pd.DataFrame([{"Participant": participant, "Date": date_str}])
+    # On utilise la méthode 'update' avec l'argument 'append'
+    conn.update(worksheet="Feuille 1", data=new_row)
 
 def delete_row_from_sheet(participant, date_str):
     """Supprime une ligne spécifique de la feuille Google Sheet."""
-    worksheet = conn.client.open_by_url(st.secrets["connections"]["gsheets"]["spreadsheet"]).worksheet("Feuille 1")
-    try:
-        cell = worksheet.find(date_str)
-        # On cherche la bonne ligne en vérifiant aussi le participant
-        all_rows = worksheet.get_all_values()
-        for i, row in enumerate(all_rows):
-            if row[0] == participant and row[1] == date_str:
-                worksheet.delete_rows(i + 1)
-                return
-    except gspread.exceptions.CellNotFound:
-        pass # La cellule n'a pas été trouvée, on ne fait rien
+    df = read_data()
+    # On trouve l'index de la ligne à supprimer
+    index_to_drop = df[
+        (df['Participant'] == participant) & 
+        (df['Date'] == date_str)
+    ].index
+    
+    if not index_to_drop.empty:
+        df = df.drop(index_to_drop)
+        # On réécrit toute la feuille (c'est la méthode la plus sûre pour la suppression)
+        conn.update(worksheet="Feuille 1", data=df)
 
 # --- INTERFACE UTILISATEUR ---
 try:
@@ -117,7 +119,6 @@ with col2:
 
     resultat_calendrier = calendar(events=events_a_afficher, options=calendar_options)
 
-    # <--- LOGIQUE DE MISE À JOUR COMPLÈTEMENT RÉÉCRITE ---
     if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
         date_cliquee_iso = resultat_calendrier.get("dateClick", {}).get("date")
         
@@ -131,12 +132,9 @@ with col2:
             ]
 
             if not selection_existante.empty:
-                # Si la date existe, on la supprime
                 delete_row_from_sheet(personne_active, date_cliquee_str)
             else:
-                # Sinon, on l'ajoute
                 add_row_to_sheet(personne_active, date_cliquee_str)
             
-            # On vide le cache et on redémarre pour afficher les données fraîches
             read_data.clear()
             st.rerun()
