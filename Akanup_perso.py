@@ -47,13 +47,13 @@ def read_data_from_gsheet():
         df['Date'] = df['Date'].astype(str)
         return df
     except Exception as e:
-        # En cas d'erreur de lecture, on affiche un message clair et on continue avec une table vide
         st.error(f"Impossible de lire la feuille '{NOM_FEUILLE_DE_CALCUL}'. Vérifiez que le nom de l'onglet est correct. Erreur: {e}")
         return pd.DataFrame(columns=["Participant", "Date"])
 
 def update_database(df_to_write):
     """Réécrit la feuille de calcul avec les nouvelles données."""
     try:
+        # On s'assure que le DataFrame a les bonnes colonnes avant d'écrire
         df_to_write = df_to_write[['Participant', 'Date']]
         conn.update(worksheet=NOM_FEUILLE_DE_CALCUL, data=df_to_write)
     except Exception as e:
@@ -70,30 +70,26 @@ st.write("Choisissez qui vous êtes, puis **cliquez sur les dates** pour indique
 
 # Initialisation de la mémoire de la session
 # La lecture depuis Google Sheet ne se fait qu'une seule fois au début de la session
-if 'data_loaded' not in st.session_state:
+if 'all_selections_df' not in st.session_state:
     st.session_state.all_selections_df = read_data_from_gsheet()
-    st.session_state.data_loaded = True
 
 if 'calendar_view_date' not in st.session_state:
     st.session_state.calendar_view_date = DATE_DEBUT
 
-# Bouton de rafraîchissement manuel pour garantir la synchronisation si plusieurs utilisateurs travaillent en même temps
-if st.button("🔄 Rafraîchir pour voir les dernières modifications des autres"):
+# Bouton de rafraîchissement manuel pour garantir la synchronisation entre utilisateurs
+if st.button("🔄 Rafraîchir les données pour voir les dernières modifications"):
     st.session_state.all_selections_df = read_data_from_gsheet()
     st.rerun()
 
 col1, col2 = st.columns([1, 2])
-
-# On utilise les données de la session_state pour tout l'affichage
-all_selections_df = st.session_state.all_selections_df
 
 with col1:
     st.header("1. Qui êtes-vous ?")
     personne_active = st.selectbox("Sélectionnez un participant :", options=PARTICIPANTS, key="participant_select")
     
     st.header("2. Tableau des résultats")
-    if not all_selections_df.empty:
-        pivot_df = all_selections_df.pivot_table(index='Date', columns='Participant', aggfunc='size', fill_value=0)
+    if not st.session_state.all_selections_df.empty:
+        pivot_df = st.session_state.all_selections_df.pivot_table(index='Date', columns='Participant', aggfunc='size', fill_value=0)
         for participant in PARTICIPANTS:
             if participant not in pivot_df.columns: pivot_df[participant] = 0
         pivot_df = pivot_df[PARTICIPANTS]
@@ -114,23 +110,27 @@ with col2:
     calendar_options = { "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,dayGridWeek"}, "initialDate": str(st.session_state.calendar_view_date), "timeZone": "UTC" }
     
     events_a_afficher = []
-    if not all_selections_df.empty:
-        for index, row in all_selections_df.iterrows():
+    if not st.session_state.all_selections_df.empty:
+        for index, row in st.session_state.all_selections_df.iterrows():
+            participant = row['Participant']
+            date_selectionnee = row['Date']
             events_a_afficher.append({
-                "title": f"Disponible {row['Participant']}",
-                "start": row['Date'],
-                "end": row['Date'],
-                "color": COULEURS_PARTICIPANTS.get(row['Participant'], "#D3D3D3"),
+                "title": f"Disponible {participant}",
+                "start": date_selectionnee,
+                "end": date_selectionnee,
+                "color": COULEURS_PARTICIPANTS.get(participant, "#D3D3D3"),
             })
     
+    # On utilise une clé statique pour la stabilité
     resultat_calendrier = calendar(events=events_a_afficher, options=calendar_options, key="stable_calendar")
 
+# On traite le résultat du clic de manière simple et directe
 if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
     date_cliquee_iso = resultat_calendrier.get("dateClick", {}).get("date")
     if date_cliquee_iso:
         date_cliquee_str = date_cliquee_iso[:10]
         
-        # On met à jour la vue du calendrier
+        # On met à jour la vue du calendrier pour la prochaine exécution
         st.session_state.calendar_view_date = date_cliquee_str
 
         # On modifie le DataFrame DANS LA SESSION
