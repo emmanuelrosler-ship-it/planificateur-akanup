@@ -10,7 +10,7 @@ PARTICIPANTS = ["Akanup", "Client", "Formateur"]
 DATE_DEBUT = date.today()
 COULEUR_ACCENT_AKANUP = "#FF6C73"
 COULEUR_HIGHLIGHT_AKANUP = "#121440"
-NOM_FEUILLE_DE_CALCUL = "Feuille 1" # ASSUREZ-VOUS QUE CE NOM CORRESPOND À VOTRE GOOGLE SHEET
+NOM_FEUILLE_DE_CALCUL = "Feuille 1" # <--- VÉRIFIEZ QUE CE NOM EST EXACTEMENT LE MÊME QUE L'ONGLET DANS VOTRE GOOGLE SHEET
 # --- FIN DE LA CONFIGURATION ---
 
 
@@ -28,7 +28,7 @@ st.set_page_config(page_title="Planificateur Akanup", layout="wide")
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception as e:
-    st.error(f"Erreur de connexion à la base de données. Vérifiez les 'Secrets' et le nom de la feuille. Erreur: {e}")
+    st.error(f"Erreur critique lors de la configuration de la connexion. Vérifiez les 'Secrets'. Erreur: {e}")
     st.stop()
 
 # --- Fonctions pour lire et écrire dans la base de données ---
@@ -41,15 +41,16 @@ def read_data():
         df['Date'] = df['Date'].astype(str)
         return df
     except Exception as e:
-        st.error(f"Impossible de lire la feuille '{NOM_FEUILLE_DE_CALCUL}'. Vérifiez que le nom de l'onglet est correct. Erreur: {e}")
-        return pd.DataFrame(columns=["Participant", "Date"])
+        st.error(f"🔴 ERREUR : Impossible de lire la feuille de calcul. Vérifiez que le nom de l'onglet est bien '{NOM_FEUILLE_DE_CALCUL}'.")
+        st.warning(f"Détails de l'erreur pour le débogage : {e}")
+        return pd.DataFrame(columns=["Participant", "Date"]) # Retourne une table vide pour éviter de planter
 
 def update_database(df_to_write):
     """Réécrit la feuille de calcul avec les nouvelles données."""
     try:
         conn.update(worksheet=NOM_FEUILLE_DE_CALCUL, data=df_to_write)
     except Exception as e:
-        st.error(f"Impossible de mettre à jour la feuille de calcul. Erreur: {e}")
+        st.error(f"🔴 ERREUR : Impossible de mettre à jour la feuille de calcul. Erreur : {e}")
 
 # --- INTERFACE UTILISATEUR ---
 try:
@@ -63,7 +64,13 @@ st.write("Choisissez qui vous êtes, puis **cliquez sur les dates** pour indique
 if 'calendar_view_date' not in st.session_state:
     st.session_state.calendar_view_date = DATE_DEBUT
 
+# On essaie de lire les données
 all_selections_df = read_data()
+
+# <--- SECTION DE DEBUG POUR VOIR CE QUI SE PASSE ---
+with st.expander("🔍 Afficher les données brutes (pour le débogage)"):
+    st.write("Ce tableau montre les données lues depuis le Google Sheet. S'il est vide, la lecture a échoué ou la feuille est vide.")
+    st.dataframe(all_selections_df)
 
 col1, col2 = st.columns([1, 2])
 
@@ -76,7 +83,7 @@ with col1:
         for participant in PARTICIPANTS:
             if participant not in pivot_df.columns:
                 pivot_df[participant] = 0
-        pivot_df = pivot_df[PARTICIPANTS]
+        pivot_df = pivot_df[PARTICIPANTS] # Réorganise les colonnes dans le bon ordre
         for participant in PARTICIPANTS:
             pivot_df[participant] = pivot_df[participant].apply(lambda x: "✅" if x > 0 else "")
         pivot_df['Total'] = pivot_df.apply(lambda row: sum(1 for x in row if x == "✅"), axis=1)
@@ -95,4 +102,20 @@ if not all_selections_df.empty:
 
 with col2:
     st.header(f"3. Calendrier pour : **{personne_active}**")
-    
+    calendar_options = { "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,dayGridWeek"}, "initialDate": str(st.session_state.calendar_view_date), "timeZone": "UTC" }
+    events_a_afficher = [{"title": "Disponible", "start": jour, "end": jour, "color": COULEUR_ACCENT_AKANUP} for jour in selections_personne]
+    resultat_calendrier = calendar(events=events_a_afficher, options=calendar_options, key=f"cal_{personne_active}")
+
+if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
+    date_cliquee_iso = resultat_calendrier.get("dateClick", {}).get("date")
+    if date_cliquee_iso:
+        date_cliquee_str = date_cliquee_iso[:10]
+        st.session_state.calendar_view_date = date_cliquee_str
+        selection_existante = all_selections_df[(all_selections_df['Participant'] == personne_active) & (all_selections_df['Date'] == date_cliquee_str)]
+        if not selection_existante.empty:
+            all_selections_df = all_selections_df.drop(selection_existante.index)
+        else:
+            nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
+            all_selections_df = pd.concat([all_selections_df, nouvelle_ligne], ignore_index=True)
+        update_database(all_selections_df)
+        st.rerun()
