@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import date
 from streamlit_gsheets import GSheetsConnection
 from streamlit_calendar import calendar
+import gspread
 
 # --- CONFIGURATION DE L'APPLICATION ---
 PARTICIPANTS = ["Akanup", "Client", "Formateur"]
@@ -31,7 +32,7 @@ except Exception as e:
     st.stop()
 
 # --- Fonctions pour lire et écrire dans la base de données ---
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=1) # Cache très court pour être réactif
 def read_data():
     df = conn.read(worksheet="Feuille 1", usecols=[0, 1])
     df = df.dropna(how="all")
@@ -39,8 +40,25 @@ def read_data():
     df['Date'] = df['Date'].astype(str)
     return df
 
-def update_database(df):
-    conn.update(worksheet="Feuille 1", data=df)
+# <--- NOUVELLES FONCTIONS DE MISE À JOUR ---
+def add_row_to_sheet(participant, date_str):
+    """Ajoute une seule ligne à la feuille Google Sheet."""
+    worksheet = conn.client.open_by_url(st.secrets["connections"]["gsheets"]["spreadsheet"]).worksheet("Feuille 1")
+    worksheet.append_row([participant, date_str])
+
+def delete_row_from_sheet(participant, date_str):
+    """Supprime une ligne spécifique de la feuille Google Sheet."""
+    worksheet = conn.client.open_by_url(st.secrets["connections"]["gsheets"]["spreadsheet"]).worksheet("Feuille 1")
+    try:
+        cell = worksheet.find(date_str)
+        # On cherche la bonne ligne en vérifiant aussi le participant
+        all_rows = worksheet.get_all_values()
+        for i, row in enumerate(all_rows):
+            if row[0] == participant and row[1] == date_str:
+                worksheet.delete_rows(i + 1)
+                return
+    except gspread.exceptions.CellNotFound:
+        pass # La cellule n'a pas été trouvée, on ne fait rien
 
 # --- INTERFACE UTILISATEUR ---
 try:
@@ -95,15 +113,11 @@ with col2:
     if not all_selections_df.empty:
         selections_personne = set(all_selections_df[all_selections_df['Participant'] == personne_active]['Date'])
         for jour_str in selections_personne:
-            events_a_afficher.append({
-                "title": "Disponible",
-                "start": jour_str,
-                "end": jour_str,
-                "color": COULEUR_ACCENT_AKANUP,
-            })
+            events_a_afficher.append({ "title": "Disponible", "start": jour_str, "end": jour_str, "color": COULEUR_ACCENT_AKANUP })
 
     resultat_calendrier = calendar(events=events_a_afficher, options=calendar_options)
 
+    # <--- LOGIQUE DE MISE À JOUR COMPLÈTEMENT RÉÉCRITE ---
     if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
         date_cliquee_iso = resultat_calendrier.get("dateClick", {}).get("date")
         
@@ -117,13 +131,12 @@ with col2:
             ]
 
             if not selection_existante.empty:
-                all_selections_df = all_selections_df.drop(selection_existante.index)
+                # Si la date existe, on la supprime
+                delete_row_from_sheet(personne_active, date_cliquee_str)
             else:
-                nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
-                all_selections_df = pd.concat([all_selections_df, nouvelle_ligne], ignore_index=True)
+                # Sinon, on l'ajoute
+                add_row_to_sheet(personne_active, date_cliquee_str)
             
-            update_database(all_selections_df)
-            
+            # On vide le cache et on redémarre pour afficher les données fraîches
             read_data.clear()
-            
             st.rerun()
