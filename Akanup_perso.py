@@ -38,7 +38,7 @@ except Exception as e:
     st.stop()
 
 # --- Fonctions pour lire et écrire dans la base de données ---
-# <--- MODIFIÉ : On retire la mise en cache @st.cache_data qui cause des problèmes de synchronisation
+# On retire @st.cache_data pour garantir que les données sont toujours fraîches pour tous les utilisateurs
 def read_data_from_gsheet():
     """Lit les données depuis la feuille de calcul."""
     try:
@@ -54,6 +54,8 @@ def read_data_from_gsheet():
 def update_database(df_to_write):
     """Réécrit la feuille de calcul avec les nouvelles données."""
     try:
+        # On s'assure que le DataFrame a les bonnes colonnes avant d'écrire
+        df_to_write = df_to_write[['Participant', 'Date']]
         conn.update(worksheet=NOM_FEUILLE_DE_CALCUL, data=df_to_write)
     except Exception as e:
         st.error(f"Impossible de mettre à jour la feuille de calcul. Erreur: {e}")
@@ -70,7 +72,7 @@ st.write("Choisissez qui vous êtes, puis **cliquez sur les dates** pour indique
 if 'calendar_view_date' not in st.session_state:
     st.session_state.calendar_view_date = DATE_DEBUT
 
-# <--- MODIFIÉ : On lit les données à chaque rechargement pour garantir la fraîcheur
+# On lit les données à chaque exécution pour garantir la synchronisation
 all_selections_df = read_data_from_gsheet()
 
 col1, col2 = st.columns([1, 2])
@@ -104,36 +106,4 @@ with col2:
     events_a_afficher = []
     if not all_selections_df.empty:
         for index, row in all_selections_df.iterrows():
-            participant = row['Participant']
-            date_selectionnee = row['Date']
-            events_a_afficher.append({
-                "title": f"Disponible {participant}",
-                "start": date_selectionnee,
-                "end": date_selectionnee,
-                "color": COULEURS_PARTICIPANTS.get(participant, "#D3D3D3"),
-            })
-    
-    resultat_calendrier = calendar(events=events_a_afficher, options=calendar_options, key="stable_calendar")
-
-if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
-    date_cliquee_iso = resultat_calendrier.get("dateClick", {}).get("date")
-    if date_cliquee_iso:
-        date_cliquee_str = date_cliquee_iso[:10]
-        
-        if 'last_processed_click' not in st.session_state or st.session_state.last_processed_click != (personne_active, date_cliquee_str):
-            st.session_state.last_processed_click = (personne_active, date_cliquee_str)
-            st.session_state.calendar_view_date = date_cliquee_str
-
-            selection_existante = all_selections_df[
-                (all_selections_df['Participant'] == personne_active) & 
-                (all_selections_df['Date'] == date_cliquee_str)
-            ]
-            
-            if not selection_existante.empty:
-                all_selections_df = all_selections_df.drop(selection_existante.index)
-            else:
-                nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
-                all_selections_df = pd.concat([all_selections_df, nouvelle_ligne], ignore_index=True)
-            
-            update_database(all_selections_df)
-            st.rerun()
+            participant = row['Par
