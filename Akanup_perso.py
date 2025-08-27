@@ -106,4 +106,41 @@ with col2:
     events_a_afficher = []
     if not all_selections_df.empty:
         for index, row in all_selections_df.iterrows():
-            participant = row['Par
+            participant = row['Participant']
+            date_selectionnee = row['Date']
+            events_a_afficher.append({
+                "title": f"Disponible {participant}",
+                "start": date_selectionnee,
+                "end": date_selectionnee,
+                "color": COULEURS_PARTICIPANTS.get(participant, "#D3D3D3"),
+            })
+    
+    # On utilise une clé statique pour la stabilité
+    resultat_calendrier = calendar(events=events_a_afficher, options=calendar_options, key="stable_calendar")
+
+# On traite le résultat du clic de manière simple et directe
+if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
+    date_cliquee_iso = resultat_calendrier.get("dateClick", {}).get("date")
+    if date_cliquee_iso:
+        date_cliquee_str = date_cliquee_iso[:10]
+        
+        # On met à jour la vue du calendrier pour la prochaine exécution
+        st.session_state.calendar_view_date = date_cliquee_str
+
+        # On modifie le DataFrame qui a été lu au début de l'exécution
+        selection_existante = all_selections_df[
+            (all_selections_df['Participant'] == personne_active) & 
+            (all_selections_df['Date'] == date_cliquee_str)
+        ]
+        
+        if not selection_existante.empty:
+            all_selections_df = all_selections_df.drop(selection_existante.index)
+        else:
+            nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
+            all_selections_df = pd.concat([all_selections_df, nouvelle_ligne], ignore_index=True)
+        
+        # On met à jour la base de données
+        update_database(all_selections_df)
+        
+        # On redémarre pour afficher le changement
+        st.rerun()
