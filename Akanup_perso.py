@@ -71,6 +71,7 @@ col1, col2 = st.columns([1, 2])
 with col1:
     st.header("1. Qui êtes-vous ?")
     personne_active = st.selectbox("Sélectionnez un participant :", options=PARTICIPANTS, key="participant_select")
+    
     st.header("2. Tableau des résultats")
     if not st.session_state.all_selections_df.empty:
         pivot_df = st.session_state.all_selections_df.pivot_table(index='Date', columns='Participant', aggfunc='size', fill_value=0)
@@ -98,28 +99,29 @@ with col2:
     calendar_options = { "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,dayGridWeek"}, "initialDate": str(st.session_state.calendar_view_date), "timeZone": "UTC" }
     events_a_afficher = [{"title": "Disponible", "start": jour, "end": jour, "color": COULEUR_ACCENT_AKANUP} for jour in selections_personne]
     
-    resultat_calendrier = calendar(events=events_a_afficher, options=calendar_options, key=f"cal_{personne_active}")
+    # On utilise une clé statique qui ne change jamais
+    resultat_calendrier = calendar(events=events_a_afficher, options=calendar_options, key="stable_calendar")
 
 if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
     date_cliquee_iso = resultat_calendrier.get("dateClick", {}).get("date")
     if date_cliquee_iso:
         date_cliquee_str = date_cliquee_iso[:10]
-        st.session_state.calendar_view_date = date_cliquee_str
+        
+        # On vérifie si ce clic a déjà été traité pour éviter les doubles exécutions
+        if 'last_processed_click' not in st.session_state or st.session_state.last_processed_click != date_cliquee_str:
+            st.session_state.last_processed_click = date_cliquee_str
+            st.session_state.calendar_view_date = date_cliquee_str
 
-        # On modifie la mémoire locale (session_state)
-        selection_existante = st.session_state.all_selections_df[
-            (st.session_state.all_selections_df['Participant'] == personne_active) & 
-            (st.session_state.all_selections_df['Date'] == date_cliquee_str)
-        ]
-        
-        if not selection_existante.empty:
-            st.session_state.all_selections_df = st.session_state.all_selections_df.drop(selection_existante.index)
-        else:
-            nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
-            st.session_state.all_selections_df = pd.concat([st.session_state.all_selections_df, nouvelle_ligne], ignore_index=True)
-        
-        # On met à jour la base de données en arrière-plan
-        update_database(st.session_state.all_selections_df)
-        
-        # On redémarre la page pour afficher le changement instantanément
-        st.rerun()
+            selection_existante = st.session_state.all_selections_df[
+                (st.session_state.all_selections_df['Participant'] == personne_active) & 
+                (st.session_state.all_selections_df['Date'] == date_cliquee_str)
+            ]
+            
+            if not selection_existante.empty:
+                st.session_state.all_selections_df = st.session_state.all_selections_df.drop(selection_existante.index)
+            else:
+                nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
+                st.session_state.all_selections_df = pd.concat([st.session_state.all_selections_df, nouvelle_ligne], ignore_index=True)
+            
+            update_database(st.session_state.all_selections_df)
+            st.rerun()
