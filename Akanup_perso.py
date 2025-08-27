@@ -9,13 +9,12 @@ from streamlit_calendar import calendar
 PARTICIPANTS = ["Akanup", "Client", "Formateur"]
 DATE_DEBUT = date.today()
 
-# <--- NOUVEAU : On définit les couleurs pour chaque participant
 COULEURS_PARTICIPANTS = {
     "Akanup": "#FF6C73",    # Corail/Rouge
     "Client": "#121440",    # Bleu nuit
     "Formateur": "#28a745"  # Vert
 }
-COULEUR_HIGHLIGHT_AKANUP = "#121440" # Pour le surlignage dans le tableau
+COULEUR_HIGHLIGHT_AKANUP = "#121440"
 
 NOM_FEUILLE_DE_CALCUL = "Feuille 1" # VÉRIFIEZ QUE CE NOM CORRESPOND À VOTRE GOOGLE SHEET
 # --- FIN DE LA CONFIGURATION ---
@@ -39,6 +38,7 @@ except Exception as e:
     st.stop()
 
 # --- Fonctions pour lire et écrire dans la base de données ---
+# <--- MODIFIÉ : On retire la mise en cache @st.cache_data qui cause des problèmes de synchronisation
 def read_data_from_gsheet():
     """Lit les données depuis la feuille de calcul."""
     try:
@@ -67,11 +67,11 @@ except:
 st.title("📅 Formation / Accompagnement Akanup")
 st.write("Choisissez qui vous êtes, puis **cliquez sur les dates** pour indiquer vos disponibilités.")
 
-# Initialisation de la mémoire de la session
 if 'calendar_view_date' not in st.session_state:
     st.session_state.calendar_view_date = DATE_DEBUT
-if 'all_selections_df' not in st.session_state:
-    st.session_state.all_selections_df = read_data_from_gsheet()
+
+# <--- MODIFIÉ : On lit les données à chaque rechargement pour garantir la fraîcheur
+all_selections_df = read_data_from_gsheet()
 
 col1, col2 = st.columns([1, 2])
 
@@ -80,8 +80,8 @@ with col1:
     personne_active = st.selectbox("Sélectionnez un participant :", options=PARTICIPANTS, key="participant_select")
     
     st.header("2. Tableau des résultats")
-    if not st.session_state.all_selections_df.empty:
-        pivot_df = st.session_state.all_selections_df.pivot_table(index='Date', columns='Participant', aggfunc='size', fill_value=0)
+    if not all_selections_df.empty:
+        pivot_df = all_selections_df.pivot_table(index='Date', columns='Participant', aggfunc='size', fill_value=0)
         for participant in PARTICIPANTS:
             if participant not in pivot_df.columns: pivot_df[participant] = 0
         pivot_df = pivot_df[PARTICIPANTS]
@@ -101,20 +101,18 @@ with col2:
     st.header(f"3. Calendrier (vue pour : **{personne_active}**)")
     calendar_options = { "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,dayGridWeek"}, "initialDate": str(st.session_state.calendar_view_date), "timeZone": "UTC" }
     
-    # <--- MODIFIÉ : On crée la liste des événements pour TOUS les participants
     events_a_afficher = []
-    if not st.session_state.all_selections_df.empty:
-        for index, row in st.session_state.all_selections_df.iterrows():
+    if not all_selections_df.empty:
+        for index, row in all_selections_df.iterrows():
             participant = row['Participant']
             date_selectionnee = row['Date']
             events_a_afficher.append({
-                "title": f"Disponible {participant}", # Titre personnalisé
+                "title": f"Disponible {participant}",
                 "start": date_selectionnee,
                 "end": date_selectionnee,
-                "color": COULEURS_PARTICIPANTS.get(participant, "#D3D3D3"), # Couleur personnalisée
+                "color": COULEURS_PARTICIPANTS.get(participant, "#D3D3D3"),
             })
     
-    # On utilise une clé statique qui ne change jamais
     resultat_calendrier = calendar(events=events_a_afficher, options=calendar_options, key="stable_calendar")
 
 if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
@@ -122,20 +120,20 @@ if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
     if date_cliquee_iso:
         date_cliquee_str = date_cliquee_iso[:10]
         
-        if 'last_processed_click' not in st.session_state or st.session_state.last_processed_click != date_cliquee_str:
-            st.session_state.last_processed_click = date_cliquee_str
+        if 'last_processed_click' not in st.session_state or st.session_state.last_processed_click != (personne_active, date_cliquee_str):
+            st.session_state.last_processed_click = (personne_active, date_cliquee_str)
             st.session_state.calendar_view_date = date_cliquee_str
 
-            selection_existante = st.session_state.all_selections_df[
-                (st.session_state.all_selections_df['Participant'] == personne_active) & 
-                (st.session_state.all_selections_df['Date'] == date_cliquee_str)
+            selection_existante = all_selections_df[
+                (all_selections_df['Participant'] == personne_active) & 
+                (all_selections_df['Date'] == date_cliquee_str)
             ]
             
             if not selection_existante.empty:
-                st.session_state.all_selections_df = st.session_state.all_selections_df.drop(selection_existante.index)
+                all_selections_df = all_selections_df.drop(selection_existante.index)
             else:
                 nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
-                st.session_state.all_selections_df = pd.concat([st.session_state.all_selections_df, nouvelle_ligne], ignore_index=True)
+                all_selections_df = pd.concat([all_selections_df, nouvelle_ligne], ignore_index=True)
             
-            update_database(st.session_state.all_selections_df)
+            update_database(all_selections_df)
             st.rerun()
