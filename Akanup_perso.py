@@ -69,16 +69,20 @@ st.title("📅 Formation / Accompagnement Akanup")
 st.write("Choisissez qui vous êtes, puis **cliquez sur les dates** pour indiquer vos disponibilités.")
 
 # Initialisation de la mémoire de la session
-# La lecture depuis Google Sheet ne se fait qu'une seule fois au début de la session
 if 'all_selections_df' not in st.session_state:
     st.session_state.all_selections_df = read_data_from_gsheet()
 
 if 'calendar_view_date' not in st.session_state:
     st.session_state.calendar_view_date = DATE_DEBUT
 
+# <--- AJOUTÉ : On initialise le verrou anti-double-clic
+if 'last_processed_click' not in st.session_state:
+    st.session_state.last_processed_click = None
+
 # Bouton de rafraîchissement manuel pour garantir la synchronisation entre utilisateurs
 if st.button("🔄 Rafraîchir les données pour voir les dernières modifications"):
     st.session_state.all_selections_df = read_data_from_gsheet()
+    st.session_state.last_processed_click = None # On réinitialise aussi le verrou
     st.rerun()
 
 col1, col2 = st.columns([1, 2])
@@ -121,32 +125,29 @@ with col2:
                 "color": COULEURS_PARTICIPANTS.get(participant, "#D3D3D3"),
             })
     
-    # On utilise une clé statique pour la stabilité
     resultat_calendrier = calendar(events=events_a_afficher, options=calendar_options, key="stable_calendar")
 
-# On traite le résultat du clic de manière simple et directe
-if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
-    date_cliquee_iso = resultat_calendrier.get("dateClick", {}).get("date")
-    if date_cliquee_iso:
-        date_cliquee_str = date_cliquee_iso[:10]
-        
-        # On met à jour la vue du calendrier pour la prochaine exécution
-        st.session_state.calendar_view_date = date_cliquee_str
+# On traite le résultat du clic
+if resultat_calendrier and resultat_calendrier != st.session_state.last_processed_click:
+    # <--- AJOUTÉ : On verrouille en mémorisant le clic que l'on va traiter
+    st.session_state.last_processed_click = resultat_calendrier
 
-        # On modifie le DataFrame DANS LA SESSION
-        selection_existante = st.session_state.all_selections_df[
-            (st.session_state.all_selections_df['Participant'] == personne_active) & 
-            (st.session_state.all_selections_df['Date'] == date_cliquee_str)
-        ]
-        
-        if not selection_existante.empty:
-            st.session_state.all_selections_df = st.session_state.all_selections_df.drop(selection_existante.index)
-        else:
-            nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
-            st.session_state.all_selections_df = pd.concat([st.session_state.all_selections_df, nouvelle_ligne], ignore_index=True)
-        
-        # On met à jour la base de données en arrière-plan
-        update_database(st.session_state.all_selections_df)
-        
-        # On redémarre pour afficher le changement instantanément depuis la session_state
-        st.rerun()
+    if resultat_calendrier.get("callback") == "dateClick":
+        date_cliquee_iso = resultat_calendrier.get("dateClick", {}).get("date")
+        if date_cliquee_iso:
+            date_cliquee_str = date_cliquee_iso[:10]
+            st.session_state.calendar_view_date = date_cliquee_str
+
+            selection_existante = st.session_state.all_selections_df[
+                (st.session_state.all_selections_df['Participant'] == personne_active) & 
+                (st.session_state.all_selections_df['Date'] == date_cliquee_str)
+            ]
+            
+            if not selection_existante.empty:
+                st.session_state.all_selections_df = st.session_state.all_selections_df.drop(selection_existante.index)
+            else:
+                nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
+                st.session_state.all_selections_df = pd.concat([st.session_state.all_selections_df, nouvelle_ligne], ignore_index=True)
+            
+            update_database(st.session_state.all_selections_df)
+            st.rerun()
