@@ -8,8 +8,15 @@ from streamlit_calendar import calendar
 # --- CONFIGURATION DE L'APPLICATION ---
 PARTICIPANTS = ["Akanup", "Client", "Formateur"]
 DATE_DEBUT = date.today()
-COULEUR_ACCENT_AKANUP = "#FF6C73"
-COULEUR_HIGHLIGHT_AKANUP = "#121440"
+
+# <--- NOUVEAU : On définit les couleurs pour chaque participant
+COULEURS_PARTICIPANTS = {
+    "Akanup": "#FF6C73",    # Corail/Rouge
+    "Client": "#121440",    # Bleu nuit
+    "Formateur": "#28a745"  # Vert
+}
+COULEUR_HIGHLIGHT_AKANUP = "#121440" # Pour le surlignage dans le tableau
+
 NOM_FEUILLE_DE_CALCUL = "Feuille 1" # VÉRIFIEZ QUE CE NOM CORRESPOND À VOTRE GOOGLE SHEET
 # --- FIN DE LA CONFIGURATION ---
 
@@ -90,14 +97,22 @@ with col1:
         st.info("Aucune date n'a encore été sélectionnée.")
 
 # --- LOGIQUE DE GESTION DU CALENDRIER ET DES CLICS ---
-selections_personne = set()
-if not st.session_state.all_selections_df.empty:
-    selections_personne = set(st.session_state.all_selections_df[st.session_state.all_selections_df['Participant'] == personne_active]['Date'])
-
 with col2:
-    st.header(f"3. Calendrier pour : **{personne_active}**")
+    st.header(f"3. Calendrier (vue pour : **{personne_active}**)")
     calendar_options = { "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,dayGridWeek"}, "initialDate": str(st.session_state.calendar_view_date), "timeZone": "UTC" }
-    events_a_afficher = [{"title": "Disponible", "start": jour, "end": jour, "color": COULEUR_ACCENT_AKANUP} for jour in selections_personne]
+    
+    # <--- MODIFIÉ : On crée la liste des événements pour TOUS les participants
+    events_a_afficher = []
+    if not st.session_state.all_selections_df.empty:
+        for index, row in st.session_state.all_selections_df.iterrows():
+            participant = row['Participant']
+            date_selectionnee = row['Date']
+            events_a_afficher.append({
+                "title": f"Disponible {participant}", # Titre personnalisé
+                "start": date_selectionnee,
+                "end": date_selectionnee,
+                "color": COULEURS_PARTICIPANTS.get(participant, "#D3D3D3"), # Couleur personnalisée
+            })
     
     # On utilise une clé statique qui ne change jamais
     resultat_calendrier = calendar(events=events_a_afficher, options=calendar_options, key="stable_calendar")
@@ -107,7 +122,6 @@ if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
     if date_cliquee_iso:
         date_cliquee_str = date_cliquee_iso[:10]
         
-        # On vérifie si ce clic a déjà été traité pour éviter les doubles exécutions
         if 'last_processed_click' not in st.session_state or st.session_state.last_processed_click != date_cliquee_str:
             st.session_state.last_processed_click = date_cliquee_str
             st.session_state.calendar_view_date = date_cliquee_str
