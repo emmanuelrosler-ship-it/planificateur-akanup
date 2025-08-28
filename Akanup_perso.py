@@ -38,6 +38,7 @@ except Exception as e:
     st.stop()
 
 # --- Fonctions pour lire et écrire dans la base de données ---
+# <--- MODIFIÉ : On retire la mise en cache @st.cache_data qui empêche la synchronisation entre utilisateurs
 def read_data_from_gsheet():
     """Lit les données depuis la feuille de calcul."""
     try:
@@ -53,7 +54,6 @@ def read_data_from_gsheet():
 def update_database(df_to_write):
     """Réécrit la feuille de calcul avec les nouvelles données."""
     try:
-        # On s'assure que le DataFrame a les bonnes colonnes avant d'écrire
         df_to_write = df_to_write[['Participant', 'Date']]
         conn.update(worksheet=NOM_FEUILLE_DE_CALCUL, data=df_to_write)
     except Exception as e:
@@ -68,24 +68,18 @@ except:
 st.title("📅 Formation / Accompagnement Akanup")
 st.write("Choisissez qui vous êtes, puis **cliquez sur les dates** pour indiquer vos disponibilités.")
 
-# Initialisation de la mémoire de la session
-# La lecture depuis Google Sheet ne se fait qu'une seule fois au début de la session
-if 'data_loaded' not in st.session_state:
-    st.session_state.all_selections_df = read_data_from_gsheet()
-    st.session_state.data_loaded = True
-
+# Initialisation de la vue du calendrier
 if 'calendar_view_date' not in st.session_state:
     st.session_state.calendar_view_date = DATE_DEBUT
 
-# Bouton de rafraîchissement manuel pour garantir la synchronisation entre utilisateurs
+# <--- MODIFIÉ : On lit les données à chaque exécution du script, sans condition, pour garantir la fraîcheur
+all_selections_df = read_data_from_gsheet()
+
+# Le bouton de rafraîchissement n'est plus la méthode principale de synchronisation, mais on peut le garder comme aide visuelle
 if st.button("🔄 Rafraîchir pour voir les dernières modifications des autres"):
-    st.session_state.all_selections_df = read_data_from_gsheet()
     st.rerun()
 
 col1, col2 = st.columns([1, 2])
-
-# On utilise les données de la session_state pour tout l'affichage
-all_selections_df = st.session_state.all_selections_df
 
 with col1:
     st.header("1. Qui êtes-vous ?")
@@ -130,23 +124,19 @@ if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
     if date_cliquee_iso:
         date_cliquee_str = date_cliquee_iso[:10]
         
-        # On met à jour la vue du calendrier
         st.session_state.calendar_view_date = date_cliquee_str
 
-        # On modifie le DataFrame DANS LA SESSION
-        selection_existante = st.session_state.all_selections_df[
-            (st.session_state.all_selections_df['Participant'] == personne_active) & 
-            (st.session_state.all_selections_df['Date'] == date_cliquee_str)
+        # On utilise le DataFrame frais qu'on a lu au début de l'exécution
+        selection_existante = all_selections_df[
+            (all_selections_df['Participant'] == personne_active) & 
+            (all_selections_df['Date'] == date_cliquee_str)
         ]
         
         if not selection_existante.empty:
-            st.session_state.all_selections_df = st.session_state.all_selections_df.drop(selection_existante.index)
+            all_selections_df = all_selections_df.drop(selection_existante.index)
         else:
             nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
-            st.session_state.all_selections_df = pd.concat([st.session_state.all_selections_df, nouvelle_ligne], ignore_index=True)
+            all_selections_df = pd.concat([all_selections_df, nouvelle_ligne], ignore_index=True)
         
-        # On met à jour la base de données en arrière-plan
-        update_database(st.session_state.all_selections_df)
-        
-        # On redémarre pour afficher le changement instantanément depuis la session_state
+        update_database(all_selections_df)
         st.rerun()
