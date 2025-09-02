@@ -41,7 +41,8 @@ except Exception as e:
 def read_data_from_gsheet():
     """Lit les données depuis la feuille de calcul."""
     try:
-        df = conn.read(worksheet=NOM_FEUILLE_DE_CALCUL, usecols=[0, 1])
+        # On ajoute ttl=1 pour forcer la relecture des données toutes les secondes
+        df = conn.read(worksheet=NOM_FEUILLE_DE_CALCUL, usecols=[0, 1], ttl=1)
         df = df.dropna(how="all")
         df['Participant'] = df['Participant'].astype(str)
         df['Date'] = df['Date'].astype(str)
@@ -67,16 +68,12 @@ except:
 st.title("📅 Formation / Accompagnement Akanup")
 st.write("Choisissez qui vous êtes, puis **cliquez sur les dates** pour indiquer vos disponibilités.")
 
-# Initialisation de la mémoire de la session
-if 'data_loaded' not in st.session_state:
-    st.session_state.all_selections_df = read_data_from_gsheet()
-    st.session_state.data_loaded = True
 if 'calendar_view_date' not in st.session_state:
     st.session_state.calendar_view_date = DATE_DEBUT
-if 'last_processed_click' not in st.session_state:
-    st.session_state.last_processed_click = None
 
-# On crée deux colonnes principales pour la page
+# On lit les données à chaque exécution du script
+all_selections_df = read_data_from_gsheet()
+
 page_col1, page_col2 = st.columns([1, 2])
 
 with page_col1:
@@ -84,8 +81,8 @@ with page_col1:
     personne_active = st.selectbox("Sélectionnez un participant :", options=PARTICIPANTS, key="participant_select")
     
     st.header("2. Tableau des résultats")
-    if not st.session_state.all_selections_df.empty:
-        pivot_df = st.session_state.all_selections_df.pivot_table(index='Date', columns='Participant', aggfunc='size', fill_value=0)
+    if not all_selections_df.empty:
+        pivot_df = all_selections_df.pivot_table(index='Date', columns='Participant', aggfunc='size', fill_value=0)
         for participant in PARTICIPANTS:
             if participant not in pivot_df.columns: pivot_df[participant] = 0
         pivot_df = pivot_df[PARTICIPANTS]
@@ -106,49 +103,39 @@ with page_col2:
     calendar_options = { "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,dayGridWeek"}, "initialDate": str(st.session_state.calendar_view_date), "timeZone": "UTC" }
     
     events_a_afficher = []
-    if not st.session_state.all_selections_df.empty:
-        for index, row in st.session_state.all_selections_df.iterrows():
+    if not all_selections_df.empty:
+        for index, row in all_selections_df.iterrows():
             events_a_afficher.append({ "title": f"Disponible {row['Participant']}", "start": row['Date'], "end": row['Date'], "color": COULEURS_PARTICIPANTS.get(row['Participant'], "#D3D3D3")})
     
     resultat_calendrier = calendar(events=events_a_afficher, options=calendar_options, key="stable_calendar")
 
-    if resultat_calendrier and resultat_calendrier != st.session_state.last_processed_click:
-        st.session_state.last_processed_click = resultat_calendrier
+    if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
+        date_cliquee_iso = resultat_calendrier.get("dateClick", {}).get("date")
+        if date_cliquee_iso:
+            date_cliquee_str = date_cliquee_iso[:10]
+            st.session_state.calendar_view_date = date_cliquee_str
 
-        if resultat_calendrier.get("callback") == "dateClick":
-            date_cliquee_iso = resultat_calendrier.get("dateClick", {}).get("date")
-            if date_cliquee_iso:
-                date_cliquee_str = date_cliquee_iso[:10]
-                st.session_state.calendar_view_date = date_cliquee_str
+            selection_existante = all_selections_df[(all_selections_df['Participant'] == personne_active) & (all_selections_df['Date'] == date_cliquee_str)]
+            
+            if not selection_existante.empty:
+                all_selections_df = all_selections_df.drop(selection_existante.index)
+            else:
+                nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
+                all_selections_df = pd.concat([all_selections_df, nouvelle_ligne], ignore_index=True)
+            
+            update_database(all_selections_df)
+            st.rerun()
 
-                selection_existante = st.session_state.all_selections_df[(st.session_state.all_selections_df['Participant'] == personne_active) & (st.session_state.all_selections_df['Date'] == date_cliquee_str)]
-                
-                if not selection_existante.empty:
-                    st.session_state.all_selections_df = st.session_state.all_selections_df.drop(selection_existante.index)
-                else:
-                    nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
-                    st.session_state.all_selections_df = pd.concat([st.session_state.all_selections_df, nouvelle_ligne], ignore_index=True)
-                
-                update_database(st.session_state.all_selections_df)
-                st.rerun()
+# --- BOUTONS D'ACTION EN BAS DE PAGE ---
+st.markdown("---")
+action_col1, action_col2 = st.columns([3, 1])
 
-# <--- NOUVEAU : On ajoute les boutons d'action en bas de la page ---
-st.markdown("---") # Ajoute une ligne de séparation
-action_col1, action_col2 = st.columns([3, 1]) # Crée une grande colonne vide et une petite à droite
-
-# La première colonne (action_col1) est utilisée pour l'espacement
 with action_col1:
-    if st.button("🔄 Rafraîchir les données"):
-        st.session_state.all_selections_df = read_data_from_gsheet()
-        st.session_state.last_processed_click = None
-        st.rerun()
+    # Ce bouton force simplement un rerun, ce qui force une relecture des données
+    st.button("🔄 Rafraîchir les données")
 
-# La deuxième colonne (action_col2) contient le bouton "Vider"
 with action_col2:
     if st.button("🗑️ Vider le calendrier", type="secondary"):
         empty_df = pd.DataFrame(columns=["Participant", "Date"])
         update_database(empty_df)
-        st.session_state.all_selections_df = empty_df
-        st.session_state.last_processed_click = None
         st.rerun()
-# --- FIN DE L'AJOUT ---
