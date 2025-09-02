@@ -76,24 +76,16 @@ if 'calendar_view_date' not in st.session_state:
 if 'last_processed_click' not in st.session_state:
     st.session_state.last_processed_click = None
 
-# Bouton de rafraîchissement manuel
-if st.button("🔄 Rafraîchir pour voir les dernières modifications des autres"):
-    st.session_state.all_selections_df = read_data_from_gsheet()
-    st.session_state.last_processed_click = None
-    st.rerun()
+# On crée deux colonnes principales pour la page
+page_col1, page_col2 = st.columns([1, 2])
 
-col1, col2 = st.columns([1, 2])
-
-# On utilise les données de la session_state pour tout l'affichage
-all_selections_df = st.session_state.all_selections_df
-
-with col1:
+with page_col1:
     st.header("1. Qui êtes-vous ?")
     personne_active = st.selectbox("Sélectionnez un participant :", options=PARTICIPANTS, key="participant_select")
     
     st.header("2. Tableau des résultats")
-    if not all_selections_df.empty:
-        pivot_df = all_selections_df.pivot_table(index='Date', columns='Participant', aggfunc='size', fill_value=0)
+    if not st.session_state.all_selections_df.empty:
+        pivot_df = st.session_state.all_selections_df.pivot_table(index='Date', columns='Participant', aggfunc='size', fill_value=0)
         for participant in PARTICIPANTS:
             if participant not in pivot_df.columns: pivot_df[participant] = 0
         pivot_df = pivot_df[PARTICIPANTS]
@@ -109,36 +101,54 @@ with col1:
         st.info("Aucune date n'a encore été sélectionnée.")
 
 # --- LOGIQUE DE GESTION DU CALENDRIER ET DES CLICS ---
-with col2:
+with page_col2:
     st.header(f"3. Calendrier (vue pour : **{personne_active}**)")
     calendar_options = { "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,dayGridWeek"}, "initialDate": str(st.session_state.calendar_view_date), "timeZone": "UTC" }
     
     events_a_afficher = []
-    if not all_selections_df.empty:
-        for index, row in all_selections_df.iterrows():
+    if not st.session_state.all_selections_df.empty:
+        for index, row in st.session_state.all_selections_df.iterrows():
             events_a_afficher.append({ "title": f"Disponible {row['Participant']}", "start": row['Date'], "end": row['Date'], "color": COULEURS_PARTICIPANTS.get(row['Participant'], "#D3D3D3")})
     
     resultat_calendrier = calendar(events=events_a_afficher, options=calendar_options, key="stable_calendar")
 
-if resultat_calendrier and resultat_calendrier != st.session_state.last_processed_click:
-    st.session_state.last_processed_click = resultat_calendrier
+    if resultat_calendrier and resultat_calendrier != st.session_state.last_processed_click:
+        st.session_state.last_processed_click = resultat_calendrier
 
-    if resultat_calendrier.get("callback") == "dateClick":
-        date_cliquee_iso = resultat_calendrier.get("dateClick", {}).get("date")
-        if date_cliquee_iso:
-            date_cliquee_str = date_cliquee_iso[:10]
-            st.session_state.calendar_view_date = date_cliquee_str
+        if resultat_calendrier.get("callback") == "dateClick":
+            date_cliquee_iso = resultat_calendrier.get("dateClick", {}).get("date")
+            if date_cliquee_iso:
+                date_cliquee_str = date_cliquee_iso[:10]
+                st.session_state.calendar_view_date = date_cliquee_str
 
-            selection_existante = all_selections_df[(all_selections_df['Participant'] == personne_active) & (all_selections_df['Date'] == date_cliquee_str)]
-            
-            if not selection_existante.empty:
-                all_selections_df = all_selections_df.drop(selection_existante.index)
-            else:
-                nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
-                all_selections_df = pd.concat([all_selections_df, nouvelle_ligne], ignore_index=True)
-            
-            # <--- LA LIGNE DE CODE CRUCIALE QUI MANQUAIT ---
-            st.session_state.all_selections_df = all_selections_df
-            
-            update_database(st.session_state.all_selections_df)
-            st.rerun()
+                selection_existante = st.session_state.all_selections_df[(st.session_state.all_selections_df['Participant'] == personne_active) & (st.session_state.all_selections_df['Date'] == date_cliquee_str)]
+                
+                if not selection_existante.empty:
+                    st.session_state.all_selections_df = st.session_state.all_selections_df.drop(selection_existante.index)
+                else:
+                    nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
+                    st.session_state.all_selections_df = pd.concat([st.session_state.all_selections_df, nouvelle_ligne], ignore_index=True)
+                
+                update_database(st.session_state.all_selections_df)
+                st.rerun()
+
+# <--- NOUVEAU : On ajoute les boutons d'action en bas de la page ---
+st.markdown("---") # Ajoute une ligne de séparation
+action_col1, action_col2 = st.columns([3, 1]) # Crée une grande colonne vide et une petite à droite
+
+# La première colonne (action_col1) est utilisée pour l'espacement
+with action_col1:
+    if st.button("🔄 Rafraîchir les données"):
+        st.session_state.all_selections_df = read_data_from_gsheet()
+        st.session_state.last_processed_click = None
+        st.rerun()
+
+# La deuxième colonne (action_col2) contient le bouton "Vider"
+with action_col2:
+    if st.button("🗑️ Vider le calendrier", type="secondary"):
+        empty_df = pd.DataFrame(columns=["Participant", "Date"])
+        update_database(empty_df)
+        st.session_state.all_selections_df = empty_df
+        st.session_state.last_processed_click = None
+        st.rerun()
+# --- FIN DE L'AJOUT ---
