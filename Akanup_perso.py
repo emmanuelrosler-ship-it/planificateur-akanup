@@ -53,6 +53,7 @@ def read_data_from_gsheet():
 def update_database(df_to_write):
     """Réécrit la feuille de calcul avec les nouvelles données."""
     try:
+        # On s'assure que le DataFrame a les bonnes colonnes avant d'écrire
         df_to_write = df_to_write[['Participant', 'Date']]
         conn.update(worksheet=NOM_FEUILLE_DE_CALCUL, data=df_to_write)
     except Exception as e:
@@ -91,6 +92,20 @@ with col1:
     st.header("1. Qui êtes-vous ?")
     personne_active = st.selectbox("Sélectionnez un participant :", options=PARTICIPANTS, key="participant_select")
     
+    # <--- NOUVEAU : On ajoute le bouton pour tout supprimer ---
+    st.header("Actions")
+    if st.button("🗑️ Vider le calendrier (supprimer toutes les dates)"):
+        # On crée un DataFrame vide avec les bonnes colonnes
+        empty_df = pd.DataFrame(columns=["Participant", "Date"])
+        # On met à jour la base de données avec ce DataFrame vide
+        update_database(empty_df)
+        # On met aussi à jour la mémoire locale de l'application
+        st.session_state.all_selections_df = empty_df
+        st.session_state.last_processed_click = None
+        # On rafraîchit la page pour montrer le résultat
+        st.rerun()
+    # --- FIN DE L'AJOUT ---
+
     st.header("2. Tableau des résultats")
     if not all_selections_df.empty:
         pivot_df = all_selections_df.pivot_table(index='Date', columns='Participant', aggfunc='size', fill_value=0)
@@ -129,16 +144,13 @@ if resultat_calendrier and resultat_calendrier != st.session_state.last_processe
             date_cliquee_str = date_cliquee_iso[:10]
             st.session_state.calendar_view_date = date_cliquee_str
 
-            selection_existante = all_selections_df[(all_selections_df['Participant'] == personne_active) & (all_selections_df['Date'] == date_cliquee_str)]
+            selection_existante = st.session_state.all_selections_df[(st.session_state.all_selections_df['Participant'] == personne_active) & (st.session_state.all_selections_df['Date'] == date_cliquee_str)]
             
             if not selection_existante.empty:
-                all_selections_df = all_selections_df.drop(selection_existante.index)
+                st.session_state.all_selections_df = st.session_state.all_selections_df.drop(selection_existante.index)
             else:
                 nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
-                all_selections_df = pd.concat([all_selections_df, nouvelle_ligne], ignore_index=True)
-            
-            # <--- LA LIGNE DE CODE CRUCIALE QUI MANQUAIT ---
-            st.session_state.all_selections_df = all_selections_df
+                st.session_state.all_selections_df = pd.concat([st.session_state.all_selections_df, nouvelle_ligne], ignore_index=True)
             
             update_database(st.session_state.all_selections_df)
             st.rerun()
