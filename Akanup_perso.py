@@ -53,7 +53,6 @@ def read_data_from_gsheet():
 def update_database(df_to_write):
     """Réécrit la feuille de calcul avec les nouvelles données."""
     try:
-        # On s'assure que le DataFrame a les bonnes colonnes avant d'écrire
         df_to_write = df_to_write[['Participant', 'Date']]
         conn.update(worksheet=NOM_FEUILLE_DE_CALCUL, data=df_to_write)
     except Exception as e:
@@ -68,14 +67,28 @@ except:
 st.title("📅 Formation / Accompagnement Akanup")
 st.write("Choisissez qui vous êtes, puis **cliquez sur les dates** pour indiquer vos disponibilités.")
 
-# Initialisation de la vue du calendrier
+# Initialisation de la mémoire de la session
+if 'data_loaded' not in st.session_state:
+    st.session_state.all_selections_df = read_data_from_gsheet()
+    st.session_state.data_loaded = True
+
 if 'calendar_view_date' not in st.session_state:
     st.session_state.calendar_view_date = DATE_DEBUT
 
-# <--- MODIFIÉ : On lit les données à chaque exécution du script, sans condition, pour garantir la fraîcheur
-all_selections_df = read_data_from_gsheet()
+# <--- MODIFIÉ : On réintroduit le verrou anti-double-clic
+if 'last_processed_click' not in st.session_state:
+    st.session_state.last_processed_click = None
+
+# Bouton de rafraîchissement manuel pour garantir la synchronisation entre utilisateurs
+if st.button("🔄 Rafraîchir pour voir les dernières modifications des autres"):
+    st.session_state.all_selections_df = read_data_from_gsheet()
+    st.session_state.last_processed_click = None # On réinitialise aussi le verrou
+    st.rerun()
 
 col1, col2 = st.columns([1, 2])
+
+# On utilise les données de la session_state pour tout l'affichage
+all_selections_df = st.session_state.all_selections_df
 
 with col1:
     st.header("1. Qui êtes-vous ?")
@@ -115,24 +128,26 @@ with col2:
     
     resultat_calendrier = calendar(events=events_a_afficher, options=calendar_options, key="stable_calendar")
 
-if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
-    date_cliquee_iso = resultat_calendrier.get("dateClick", {}).get("date")
-    if date_cliquee_iso:
-        date_cliquee_str = date_cliquee_iso[:10]
-        
-        st.session_state.calendar_view_date = date_cliquee_str
+# On traite le résultat du clic en utilisant le verrou
+if resultat_calendrier and resultat_calendrier != st.session_state.last_processed_click:
+    st.session_state.last_processed_click = resultat_calendrier # On active le verrou
 
-        # On utilise le DataFrame frais qu'on a lu au début de l'exécution
-        selection_existante = all_selections_df[
-            (all_selections_df['Participant'] == personne_active) & 
-            (all_selections_df['Date'] == date_cliquee_str)
-        ]
-        
-        if not selection_existante.empty:
-            all_selections_df = all_selections_df.drop(selection_existante.index)
-        else:
-            nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
-            all_selections_df = pd.concat([all_selections_df, nouvelle_ligne], ignore_index=True)
-        
-        update_database(all_selections_df)
-        st.rerun()
+    if resultat_calendrier.get("callback") == "dateClick":
+        date_cliquee_iso = resultat_calendrier.get("dateClick", {}).get("date")
+        if date_cliquee_iso:
+            date_cliquee_str = date_cliquee_iso[:10]
+            st.session_state.calendar_view_date = date_cliquee_str
+
+            selection_existante = st.session_state.all_selections_df[
+                (st.session_state.all_selections_df['Participant'] == personne_active) & 
+                (st.session_state.all_selections_df['Date'] == date_cliquee_str)
+            ]
+            
+            if not selection_existante.empty:
+                st.session_state.all_selections_df = st.session_state.all_selections_df.drop(selection_existante.index)
+            else:
+                nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
+                st.session_state.all_selections_df = pd.concat([st.session_state.all_selections_df, nouvelle_ligne], ignore_index=True)
+            
+            update_database(st.session_state.all_selections_df)
+            st.rerun()
