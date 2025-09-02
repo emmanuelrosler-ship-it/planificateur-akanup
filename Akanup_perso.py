@@ -53,7 +53,6 @@ def read_data_from_gsheet():
 def update_database(df_to_write):
     """Réécrit la feuille de calcul avec les nouvelles données."""
     try:
-        # On s'assure que le DataFrame a les bonnes colonnes avant d'écrire
         df_to_write = df_to_write[['Participant', 'Date']]
         conn.update(worksheet=NOM_FEUILLE_DE_CALCUL, data=df_to_write)
     except Exception as e:
@@ -69,17 +68,18 @@ st.title("📅 Formation / Accompagnement Akanup")
 st.write("Choisissez qui vous êtes, puis **cliquez sur les dates** pour indiquer vos disponibilités.")
 
 # Initialisation de la mémoire de la session
-# La lecture depuis Google Sheet ne se fait qu'une seule fois au début de la session
 if 'data_loaded' not in st.session_state:
     st.session_state.all_selections_df = read_data_from_gsheet()
     st.session_state.data_loaded = True
-
 if 'calendar_view_date' not in st.session_state:
     st.session_state.calendar_view_date = DATE_DEBUT
+if 'last_processed_click' not in st.session_state:
+    st.session_state.last_processed_click = None
 
-# Bouton de rafraîchissement manuel pour garantir la synchronisation entre utilisateurs
+# Bouton de rafraîchissement manuel
 if st.button("🔄 Rafraîchir pour voir les dernières modifications des autres"):
     st.session_state.all_selections_df = read_data_from_gsheet()
+    st.session_state.last_processed_click = None
     st.rerun()
 
 col1, col2 = st.columns([1, 2])
@@ -116,37 +116,29 @@ with col2:
     events_a_afficher = []
     if not all_selections_df.empty:
         for index, row in all_selections_df.iterrows():
-            events_a_afficher.append({
-                "title": f"Disponible {row['Participant']}",
-                "start": row['Date'],
-                "end": row['Date'],
-                "color": COULEURS_PARTICIPANTS.get(row['Participant'], "#D3D3D3"),
-            })
+            events_a_afficher.append({ "title": f"Disponible {row['Participant']}", "start": row['Date'], "end": row['Date'], "color": COULEURS_PARTICIPANTS.get(row['Participant'], "#D3D3D3")})
     
     resultat_calendrier = calendar(events=events_a_afficher, options=calendar_options, key="stable_calendar")
 
-if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
-    date_cliquee_iso = resultat_calendrier.get("dateClick", {}).get("date")
-    if date_cliquee_iso:
-        date_cliquee_str = date_cliquee_iso[:10]
-        
-        # On met à jour la vue du calendrier
-        st.session_state.calendar_view_date = date_cliquee_str
+if resultat_calendrier and resultat_calendrier != st.session_state.last_processed_click:
+    st.session_state.last_processed_click = resultat_calendrier
 
-        # On modifie le DataFrame DANS LA SESSION
-        selection_existante = st.session_state.all_selections_df[
-            (st.session_state.all_selections_df['Participant'] == personne_active) & 
-            (st.session_state.all_selections_df['Date'] == date_cliquee_str)
-        ]
-        
-        if not selection_existante.empty:
-            st.session_state.all_selections_df = st.session_state.all_selections_df.drop(selection_existante.index)
-        else:
-            nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
-            st.session_state.all_selections_df = pd.concat([st.session_state.all_selections_df, nouvelle_ligne], ignore_index=True)
-        
-        # On met à jour la base de données en arrière-plan
-        update_database(st.session_state.all_selections_df)
-        
-        # On redémarre pour afficher le changement instantanément depuis la session_state
-        st.rerun()
+    if resultat_calendrier.get("callback") == "dateClick":
+        date_cliquee_iso = resultat_calendrier.get("dateClick", {}).get("date")
+        if date_cliquee_iso:
+            date_cliquee_str = date_cliquee_iso[:10]
+            st.session_state.calendar_view_date = date_cliquee_str
+
+            selection_existante = all_selections_df[(all_selections_df['Participant'] == personne_active) & (all_selections_df['Date'] == date_cliquee_str)]
+            
+            if not selection_existante.empty:
+                all_selections_df = all_selections_df.drop(selection_existante.index)
+            else:
+                nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
+                all_selections_df = pd.concat([all_selections_df, nouvelle_ligne], ignore_index=True)
+            
+            # <--- LA LIGNE DE CODE CRUCIALE QUI MANQUAIT ---
+            st.session_state.all_selections_df = all_selections_df
+            
+            update_database(st.session_state.all_selections_df)
+            st.rerun()
