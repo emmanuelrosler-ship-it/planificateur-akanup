@@ -30,8 +30,16 @@ def highlight_common_days(row):
 # --- CŒUR DE L'APPLICATION STREAMLIT ---
 st.set_page_config(page_title="Planificateur Akanup", layout="wide")
 
+# Connexion à la base de données Google Sheets
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+except Exception as e:
+    st.error(f"Erreur de connexion à la base de données. Vérifiez les 'Secrets'. Erreur: {e}")
+    st.stop()
+
 # --- Fonctions pour lire et écrire dans la base de données ---
-def read_data_from_gsheet(conn):
+@st.cache_data(ttl=5) # Cache court pour éviter les erreurs de quota tout en restant synchronisé
+def read_data_from_gsheet():
     """Lit les données depuis la feuille de calcul."""
     try:
         df = conn.read(worksheet=NOM_FEUILLE_DE_CALCUL, usecols=[0, 1])
@@ -40,18 +48,20 @@ def read_data_from_gsheet(conn):
         df['Date'] = df['Date'].astype(str)
         return df
     except Exception as e:
-        st.error(f"Impossible de lire la feuille '{NOM_FEUILLE_DE_CALCUL}'. Vérifiez que le nom de l'onglet et les permissions sont corrects. Erreur: {e}")
+        st.error(f"Impossible de lire la feuille '{NOM_FEUILLE_DE_CALCUL}'. Vérifiez que le nom de l'onglet est correct. Erreur: {e}")
         return pd.DataFrame(columns=["Participant", "Date"])
 
-def update_database(conn, df_to_write):
+def update_database(df_to_write):
     """Réécrit la feuille de calcul avec les nouvelles données."""
     try:
         df_to_write = df_to_write[['Participant', 'Date']]
         conn.update(worksheet=NOM_FEUILLE_DE_CALCUL, data=df_to_write)
+        # On vide le cache immédiatement après une écriture pour garantir la fraîcheur
+        read_data_from_gsheet.clear()
     except Exception as e:
         st.error(f"Impossible de mettre à jour la feuille de calcul. Erreur: {e}")
 
-# --- INTERFACE UTILISATEUR DE BASE ---
+# --- INTERFACE UTILISATEUR ---
 try:
     st.image("logo_akanup.png", width=200)
 except:
@@ -60,32 +70,11 @@ except:
 st.title("📅 Formation / Accompagnement Akanup")
 st.write("Choisissez qui vous êtes, puis **cliquez sur les dates** pour indiquer vos disponibilités.")
 
-# Initialisation de la mémoire de la session
-if 'data_loaded' not in st.session_state:
-    st.session_state.data_loaded = False
-    st.session_state.all_selections_df = pd.DataFrame(columns=["Participant", "Date"])
 if 'calendar_view_date' not in st.session_state:
     st.session_state.calendar_view_date = DATE_DEBUT
 
-# Connexion à Google Sheets et chargement initial des données
-if not st.session_state.data_loaded:
-    with st.spinner("Connexion à la base de données et chargement des disponibilités..."):
-        try:
-            conn = st.connection("gsheets", type=GSheetsConnection)
-            st.session_state.all_selections_df = read_data_from_gsheet(conn)
-            st.session_state.data_loaded = True
-            st.rerun() # On rafraîchit la page maintenant que les données sont chargées
-        except Exception as e:
-            st.error(f"Erreur critique lors de la connexion initiale. Vérifiez vos 'Secrets' et les permissions de l'API. Erreur: {e}")
-            st.stop()
-
-# --- AFFICHAGE PRINCIPAL (uniquement si les données sont chargées) ---
-conn = st.connection("gsheets", type=GSheetsConnection) # On s'assure que la connexion est disponible pour les mises à jour
-
-# Bouton de rafraîchissement manuel
-if st.button("🔄 Rafraîchir pour voir les dernières modifications des autres"):
-    st.session_state.all_selections_df = read_data_from_gsheet(conn)
-    st.rerun()
+# On lit les données à chaque exécution, en profitant du cache intelligent
+all_selections_df = read_data_from_gsheet()
 
 col1, col2 = st.columns([1, 2])
 
@@ -94,8 +83,8 @@ with col1:
     personne_active = st.selectbox("Sélectionnez un participant :", options=PARTICIPANTS, key="participant_select")
     
     st.header("2. Tableau des résultats")
-    if not st.session_state.all_selections_df.empty:
-        pivot_df = st.session_state.all_selections_df.pivot_table(index='Date', columns='Participant', aggfunc='size', fill_value=0)
+    if not all_selections_df.empty:
+        pivot_df = all_selections_df.pivot_table(index='Date', columns='Participant', aggfunc='size', fill_value=0)
         for participant in PARTICIPANTS:
             if participant not in pivot_df.columns: pivot_df[participant] = 0
         pivot_df = pivot_df[PARTICIPANTS]
@@ -116,9 +105,14 @@ with col2:
     calendar_options = { "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,dayGridWeek"}, "initialDate": str(st.session_state.calendar_view_date), "timeZone": "UTC" }
     
     events_a_afficher = []
-    if not st.session_state.all_selections_df.empty:
-        for index, row in st.session_state.all_selections_df.iterrows():
-            events_a_afficher.append({ "title": f"Disponible {row['Participant']}", "start": row['Date'], "end": row['Date'], "color": COULEURS_PARTICIPANTS.get(row['Participant'], "#D3D3D3")})
+    if not all_selections_df.empty:
+        for index, row in all_selections_df.iterrows():
+            events_a_afficher.append({
+                "title": f"Disponible {row['Participant']}",
+                "start": row['Date'],
+                "end": row['Date'],
+                "color": COULEURS_PARTICIPANTS.get(row['Participant'], "#D3D3D3"),
+            })
     
     resultat_calendrier = calendar(events=events_a_afficher, options=calendar_options, key="stable_calendar")
 
@@ -128,13 +122,28 @@ if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
         date_cliquee_str = date_cliquee_iso[:10]
         st.session_state.calendar_view_date = date_cliquee_str
 
-        selection_existante = st.session_state.all_selections_df[(st.session_state.all_selections_df['Participant'] == personne_active) & (st.session_state.all_selections_df['Date'] == date_cliquee_str)]
+        selection_existante = all_selections_df[(all_selections_df['Participant'] == personne_active) & (all_selections_df['Date'] == date_cliquee_str)]
         
         if not selection_existante.empty:
-            st.session_state.all_selections_df = st.session_state.all_selections_df.drop(selection_existante.index)
+            all_selections_df = all_selections_df.drop(selection_existante.index)
         else:
             nouvelle_ligne = pd.DataFrame([{"Participant": personne_active, "Date": date_cliquee_str}])
-            st.session_state.all_selections_df = pd.concat([st.session_state.all_selections_df, nouvelle_ligne], ignore_index=True)
+            all_selections_df = pd.concat([all_selections_df, nouvelle_ligne], ignore_index=True)
         
-        update_database(conn, st.session_state.all_selections_df)
+        update_database(all_selections_df)
+        st.rerun()
+
+# --- BOUTONS D'ACTION EN BAS DE PAGE ---
+st.markdown("---")
+action_col1, action_col2 = st.columns([3, 1])
+
+with action_col1:
+    if st.button("🔄 Rafraîchir les données"):
+        read_data_from_gsheet.clear() # On force la relecture des données fraîches depuis Google
+        st.rerun()
+
+with action_col2:
+    if st.button("🗑️ Vider le calendrier", type="secondary"):
+        empty_df = pd.DataFrame(columns=["Participant", "Date"])
+        update_database(empty_df)
         st.rerun()
