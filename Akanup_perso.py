@@ -132,18 +132,3 @@ if resultat_calendrier and resultat_calendrier.get("callback") == "dateClick":
         
         update_database(all_selections_df)
         st.rerun()
-
-# --- BOUTONS D'ACTION EN BAS DE PAGE ---
-st.markdown("---")
-action_col1, action_col2 = st.columns([3, 1])
-
-with action_col1:
-    if st.button("🔄 Rafraîchir les données"):
-        read_data_from_gsheet.clear() # On force la relecture des données fraîches depuis Google
-        st.rerun()
-
-with action_col2:
-    if st.button("🗑️ Vider le calendrier", type="secondary"):
-        empty_df = pd.DataFrame(columns=["Participant", "Date"])
-        update_database(empty_df)
-        st.rerun()
